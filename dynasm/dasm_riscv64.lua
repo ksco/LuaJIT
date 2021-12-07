@@ -269,6 +269,28 @@ local map_op = {
   sb_2 = "00000023rS",
   sh_2 = "00001023rS",
   sw_2 = "00002023rS",
+
+  -- RV64I additions to RV32I
+  addiw_3 = "0000001bDRI",
+  slliw_3 = "0000101bDRw",
+  srliw_3 = "0000501bDRw",
+  sraiw_3 = "4000501bDRw",
+
+  addw_3 = "0000003bDRr",
+  subw_3 = "4000003bDRr",
+  sllw_3 = "0000103bDRr",
+  srlw_3 = "0000503bDRr",
+  sraw_3 = "4000503bDRr",
+
+  ld_2 =  "00003003DL",
+  lwu_2 = "00006003DL",
+
+  sd_2 = "00003023rS",
+
+  -- RV32 versions of these are in opcodes-pseudo
+  slli_3 = "00001013DRi",
+  srli_3 = "00005013DRi",
+  srai_3 = "40005013DRi",
 }
 
 ------------------------------------------------------------------------------
@@ -418,7 +440,7 @@ map_op[".template__"] = function(params, template, nparams)
       op = op + shl(parse_gpr(params[n]), 20); n = n + 1
     elseif p == "I" then
       op = op + parse_imm(params[n], 12, 20, 0, true); n = n + 1
-    elseif p == "O" then
+    elseif p == "L" then
       op = op + parse_disp(params[n]); n = n + 1
     elseif p == "S" then
       op = op + parse_disp(params[n], true); n = n + 1
@@ -429,6 +451,10 @@ map_op[".template__"] = function(params, template, nparams)
       n = n + 1
     elseif p == "U" then
       op = op + parse_imm(params[n], 20, 12, 0, false); n = n + 1
+    elseif p == "w" then
+      op = op + parse_imm(params[n], 5, 20, 0, false); n = n + 1
+    elseif p == "i" then
+      op = op + parse_imm(params[n], 6, 20, 0, false); n = n + 1
     end
   end
   wputpos(pos, op)
