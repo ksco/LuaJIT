@@ -1,0 +1,25 @@
+<!-- FIXME: Remove this after finish -->
+
+<html>
+<body>
+  <h1>Template Generator</h1>
+  <input id="funct7" type="text" placeholder="funct7 decimal" />
+  <input id="funct3" type="text" placeholder="funct3 decimal" />
+  <input id="opcode2" type="text" placeholder="opcode[6:2] hex" />
+  <input id="opcode1" type="text" placeholder="opcode[1:0] hex" />
+
+
+  <p id="result">Result:</p>
+  <button onclick="(function () {
+    const funct7 = parseInt(document.getElementById('funct7').value || 0, 10);
+    const funct3 = parseInt(document.getElementById('funct3').value || 0, 10);
+    const opcode2 = parseInt(document.getElementById('opcode2').value || 0, 16);
+    const opcode1 = parseInt(document.getElementById('opcode1').value || 0, 16);
+
+    let v = (opcode1 + (opcode2 << 2) + (funct3 << 12) + (funct7 << 25)).toString(16);
+    v = v.padStart(8, '0')
+    document.getElementById('result').innerHTML = 'Result:' + v;
+  })()">Generate</button>
+</body>
+
+</html>
