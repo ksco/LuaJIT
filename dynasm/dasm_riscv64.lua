@@ -291,6 +291,23 @@ local map_op = {
   slli_3 = "00001013DRi",
   srli_3 = "00005013DRi",
   srai_3 = "40005013DRi",
+
+  -- RV32M
+  mul_3 =    "02000033DRr",
+  mulh_3 =   "02001033DRr",
+  mulhsu_3 = "02002033DRr",
+  mulhu_3 =  "02003033DRr",
+  div_3 =    "02004033DRr",
+  divu_3 =   "02005033DRr",
+  rem_3 =    "02006033DRr",
+  remu_3 =   "02007033DRr",
+
+  -- RV64M additions to RV32M
+  mulw_3 =  "0200003bDRr",
+  divw_3 =  "0200403bDRr",
+  divuw_3 = "0200503bDRr",
+  remw_3 =  "0200603bDRr",
+  remuw_3 = "0200703bDRr",
 }
 
 ------------------------------------------------------------------------------
