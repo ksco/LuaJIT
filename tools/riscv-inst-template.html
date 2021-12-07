@@ -16,9 +16,9 @@
     const opcode2 = parseInt(document.getElementById('opcode2').value || 0, 16);
     const opcode1 = parseInt(document.getElementById('opcode1').value || 0, 16);
 
-    let v = (opcode1 + (opcode2 << 2) + (funct3 << 12) + (funct7 << 25)).toString(16);
+    let v = (opcode1 + (opcode2 << 2 >>> 0) + (funct3 << 12 >>> 0) + (funct7 << 25 >>> 0)).toString(16);
     v = v.padStart(8, '0')
-    document.getElementById('result').innerHTML = 'Result:' + v;
+    document.getElementById('result').innerHTML = 'Result: ' + v;
   })()">Generate</button>
 </body>
 

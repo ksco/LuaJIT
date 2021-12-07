@@ -272,9 +272,9 @@ local map_op = {
 
   -- RV64I additions to RV32I
   addiw_3 = "0000001bDRI",
-  slliw_3 = "0000101bDRw",
-  srliw_3 = "0000501bDRw",
-  sraiw_3 = "4000501bDRw",
+  slliw_3 = "0000101bDRW",
+  srliw_3 = "0000501bDRW",
+  sraiw_3 = "4000501bDRW",
 
   addw_3 = "0000003bDRr",
   subw_3 = "4000003bDRr",
@@ -308,6 +308,19 @@ local map_op = {
   divuw_3 = "0200503bDRr",
   remw_3 =  "0200603bDRr",
   remuw_3 = "0200703bDRr",
+
+  -- RV32F
+  ["fadd.s_3"] =   "00000053FGg",
+  ["fsub.s_3"] =   "08000053FGg",
+  ["fmul.s_3"] =   "10000053FGg",
+  ["fdiv.s_3"] =   "18000053FGg",
+  ["fsgnj.s_3"] =  "20000053FGg",
+  ["fsgnjn.s_3"] = "20001053FGg",
+  ["fsgnjx.s_3"] = "20002053FGg",
+  ["fmin.s_2"] =   "58000053FG",
+  ["fle.s_3"] =    "a0000053DGg",
+  ["flt.s_3"] =    "a0001053DGg",
+  ["feq.s_3"] =    "a0002053DGg",
 }
 
 ------------------------------------------------------------------------------
@@ -448,6 +461,23 @@ map_op[".template__"] = function(params, template, nparams)
 
   -- Process each character.
 
+  --[[
+    D: rd
+    R: rs1
+    r: rs2
+    I: I-type imm
+    L: I-type label, imm(rs1)
+    S: S-type label, imm(rs1)
+    B: B-type label, imm
+    J: J-type label, imm
+    U: U-type imm
+    W: shamtw imm
+    i: shamt imm
+    F: rd float
+    G: rs1 float
+    g: rs2 float
+  ]]
+
   for p in gmatch(sub(template, 9), ".") do
     if p == "D" then
       op = op + shl(parse_gpr(params[n]), 7); n = n + 1
@@ -468,10 +498,16 @@ map_op[".template__"] = function(params, template, nparams)
       n = n + 1
     elseif p == "U" then
       op = op + parse_imm(params[n], 20, 12, 0, false); n = n + 1
-    elseif p == "w" then
+    elseif p == "W" then
       op = op + parse_imm(params[n], 5, 20, 0, false); n = n + 1
     elseif p == "i" then
       op = op + parse_imm(params[n], 6, 20, 0, false); n = n + 1
+    elseif p == "F" then
+      op = op + shl(parse_fpr(params[n]), 7); n = n + 1
+    elseif p == "G" then
+      op = op + shl(parse_fpr(params[n]), 15); n = n + 1
+    elseif p == "g" then
+      op = op + shl(parse_fpr(params[n]), 20); n = n + 1
     end
   end
   wputpos(pos, op)
