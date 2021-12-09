@@ -317,10 +317,80 @@ local map_op = {
   ["fsgnj.s_3"] =  "20000053FGg",
   ["fsgnjn.s_3"] = "20001053FGg",
   ["fsgnjx.s_3"] = "20002053FGg",
-  ["fmin.s_2"] =   "58000053FG",
+  ["fmin.s_3"] =   "28000053FG",
+  ["fmax.s_3"] =   "28001053FG",
+  ["fsqrt.s_2"] =  "58000053FG",
   ["fle.s_3"] =    "a0000053DGg",
   ["flt.s_3"] =    "a0001053DGg",
   ["feq.s_3"] =    "a0002053DGg",
+
+  ["fcvt.w.s_2"] =  "c0000053DG",
+  ["fcvt.wu.s_2"] = "c0100053DG",
+  ["fmv.x.w_2"] =   "e0000053DG",
+  ["fclass.s_2"] =  "e0001053DG",
+
+  ["fcvt.s.w_2"] =  "d0000053FR",
+  ["fcvt.s.wu_2"] = "d0100053FR",
+  ["fmv.w.x_2"] =   "f0000053FR",
+
+  ["flw_2"] = "00002007FL",
+
+  ["fsw_2"] = "00002027gS",
+
+  ["fmadd.s_4"] =   "00000043FGgH",
+  ["fmsub.s_4"] =   "00000047FGgH",
+  ["fnmsub.s_4"] =  "0000004bFGgH",
+  ["fnmadd.s_4"] =  "0000004fFGgH",
+
+  -- RV64F additions to RV32F
+  ["fcvt.l.s_2"] =  "c0200053DG",
+  ["fcvt.lu.s_2"] = "c0300053DG",
+
+  ["fcvt.s.l_2"] = "d0200053FR",
+  ["fcvt.s.lu_2"] = "d0300053FR",
+
+  -- RV32D
+  ["fadd.d_3"] =   "02007053FGg",
+  ["fsub.d_3"] =   "0a007053FGg",
+  ["fmul.d_3"] =   "12007053FGg",
+  ["fdiv.d_3"] =   "1a007053FGg",
+  ["fsgnj.d_3"] =  "22000053FGg",
+  ["fsgnjn.d_3"] = "22001053FGg",
+  ["fsgnjx.d_3"] = "22002053FGg",
+  ["fmin.d_3"] =   "2a000053FGg",
+  ["fmax.d_3"] =   "2a001053FGg",
+  ["fcvt.s.d_2"] = "40100053FG",
+  ["fcvt.d.s_2"] = "42000053FG",
+  ["fsqrt.d_2"] =  "5a007053FG",
+
+  ["fle.d_3"] = "a2000053DGg",
+  ["flt.d_3"] = "a2001053DGg",
+  ["feq.d_3"] = "a2002053DGg",
+
+  ["fcvt.w.d_2"] =  "c2007053DG",
+  ["fcvt.wu.d_2"] = "c2107053DG",
+  ["fclass.d_2"] =  "e2001053DG",
+
+  ["fcvt.d.w_2"] =  "d2007053FR",
+  ["fcvt.d.wu_2"] = "d2107053FR",
+
+  ["fld_2"] = "00003007FL",
+
+  ["fsd_2"] = "00003027gS",
+
+  ["fmadd.d_4"] = "02007043FGgH",
+  ["fmsub.d_4"] = "02007047FGgH",
+  ["fnmsub.d_4"] = "0200704bFGgH",
+  ["fnmadd.d_4"] = "0200704fFGgH",
+
+  -- RV64D additions to RV32D
+  ["fcvt.l.d_2"] =  "c2200053DG",
+  ["fcvt.lu.d_2"] = "c2300053DG",
+  ["fmv.x.d_2"] =   "e2000053DG",
+
+  ["fcvt.d.l_2"] =  "d2200053FR",
+  ["fcvt.d.lu_2"] = "d2300053FR",
+  ["fmv.d.x_2"] =   "f2000053FR",
 }
 
 ------------------------------------------------------------------------------
@@ -476,6 +546,7 @@ map_op[".template__"] = function(params, template, nparams)
     F: rd float
     G: rs1 float
     g: rs2 float
+    H: rs3 float
   ]]
 
   for p in gmatch(sub(template, 9), ".") do
@@ -508,6 +579,8 @@ map_op[".template__"] = function(params, template, nparams)
       op = op + shl(parse_fpr(params[n]), 15); n = n + 1
     elseif p == "g" then
       op = op + shl(parse_fpr(params[n]), 20); n = n + 1
+    elseif p == "H" then
+      op = op + shl(parse_fpr(params[n]), 27); n = n + 1
     end
   end
   wputpos(pos, op)
