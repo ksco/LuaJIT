@@ -95,7 +95,7 @@ end
 -- Add action to list with optional arg. Advance buffer pos, too.
 local function waction(action, val, a, num)
   local w = assert(map_action[action], "bad action name `"..action.."'")
-  wputxw(w * 0x10000 + (val or 0))
+  wputxw(0xff000000 + w * 0x10000 + (val or 0))
   if a then actargs[#actargs+1] = a end
   if a or num then secpos = secpos + (num or 1) end
 end
