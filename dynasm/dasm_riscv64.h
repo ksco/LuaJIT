@@ -13,6 +13,7 @@
 
 #ifndef DASM_EXTERN
 #define DASM_EXTERN(a,b,c,d) 0
+#endif
 
 /* Action definitions. */
 enum {
@@ -22,7 +23,7 @@ enum {
   /* The following actions also have an argument. */
   DASM_REL_PC, DASM_LABEL_PC, DASM_IMM, DASM_IMMS,
   DASM__MAX
-}
+};
 
 /* Maximum number of section buffer positions for a single dasm_put() call. */
 #define DASM_MAXSECPOS 25
@@ -356,15 +357,16 @@ int dasm_encode(Dst_DECL, void *buffer)
     case DASM_REL_PC:
       CK(n >= 0, UNDEF_PC);
       n = *DASM_POS2PTR(D, n) - (int)((char *)cp - base) + 4;
-    patchrel: {
-      if (ins & 0x800) { /* B-type imm */
-        /* n must be an even number and less than 2^13 */
-        CK((n & 1) == 0 && ((n + 0x1000) >> 13) == 0, RANGE_REL);
-        cp[-1] |= ((n << 7) & 0x0f00) | ((n << 20) & 0x7e000000) | ((n >> 4) & 0x80) | ((n << 19) & 0x80000000);
-      } else { /* J-type imm */
-        /* n must be an even number and less than 2^21 */
-        CK((n & 1) == 0 && ((n+0x100000) >> 21) == 0, RANGE_REL);
-	      cp[-1] |= ((n << 20) & 0x7fe00000) | ((n << 9) & 0x100000) | (n & 0xff000) | ((n << 11) & 0x80000000);
+      patchrel: {
+        if (ins & 0x800) { /* B-type imm */
+          /* n must be an even number and less than 2^13 */
+          CK((n & 1) == 0 && ((n + 0x1000) >> 13) == 0, RANGE_REL);
+          cp[-1] |= ((n << 7) & 0x0f00) | ((n << 20) & 0x7e000000) | ((n >> 4) & 0x80) | ((n << 19) & 0x80000000);
+        } else { /* J-type imm */
+          /* n must be an even number and less than 2^21 */
+          CK((n & 1) == 0 && ((n+0x100000) >> 21) == 0, RANGE_REL);
+          cp[-1] |= ((n << 20) & 0x7fe00000) | ((n << 9) & 0x100000) | (n & 0xff000) | ((n << 11) & 0x80000000);
+        }
       }
       break;
     case DASM_LABEL_LG:
@@ -375,7 +377,7 @@ int dasm_encode(Dst_DECL, void *buffer)
       cp[-1] |= (((n & 0x1f) << 7) | ((n & 0xffe0) << 20));
       break;
     case DASM_IMM:
-      cp[-1] |= ((n & ((1 << ((val >> 5) & 0x1f)) - 1)) << (val & 0x1f));
+      cp[-1] |= ((n & ((1 << ((ins >> 5) & 0x1f)) - 1)) << (ins & 0x1f));
       break;
     default: *cp++ = ins; break;
     }
