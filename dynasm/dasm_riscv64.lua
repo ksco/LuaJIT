@@ -391,6 +391,25 @@ local map_op = {
   ["fcvt.d.l_2"] =  "d2200053FR",
   ["fcvt.d.lu_2"] = "d2300053FR",
   ["fmv.d.x_2"] =   "f2000053FR",
+
+  -- Pseudo Instructions
+  nop_0 = "00000013",
+  li_2 = "00000013DI",
+  mv_2 = "00000013DR",
+  not_2 = "fff04013DR",
+  neg_2 = "40000033Dr",
+
+  j_1 = "0000006fJ",
+  jal_1 = "000000efJ",
+  jr_1 = "00000067R",
+  jalr_1 = "000000e7R",
+  ret_0 = "00008067",
+  bnez_2 = "00001063RB",
+  beqz_2 = "00000063RB",
+  blez_2 = "00005063rB",
+  bgez_2 = "00005063RB",
+  bltz_2 = "00004063RB",
+  bgtz_2 = "00004063rB",
 }
 
 ------------------------------------------------------------------------------
@@ -470,7 +489,7 @@ local function parse_disp(disp, store)
       waction("REL_EXT", map_extern[extname], nil, 1)
       return r
     elseif store then
-      return r + parse_imm_stype(imm, true)
+      return r + parse_imm_stype(imm)
     else
       return r + parse_imm(imm, 12, 20, 0, true)
     end
@@ -583,6 +602,7 @@ map_op[".template__"] = function(params, template, nparams)
       op = op + shl(parse_fpr(params[n]), 27); n = n + 1
     end
   end
+  if (op < 0) then op = 0xffffffff + op + 1 end
   wputpos(pos, op)
 end
 

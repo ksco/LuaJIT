@@ -264,6 +264,15 @@ enum { LJ_CONT_TAILCALL, LJ_CONT_FFI_CALLBACK };  /* Special continuations. */
 #endif
 #define CFRAME_OFS_MULTRES	0
 #define CFRAME_SHIFT_MULTRES	3
+#elif LJ_TARGET_RISCV64
+#define CFRAME_SIZE		192
+#define CFRAME_OFS_ERRF		188
+#define CFRAME_OFS_NRES		184
+#define CFRAME_OFS_PREV		176
+#define CFRAME_OFS_L		168
+#define CFRAME_OFS_PC		160
+#define CFRAME_OFS_MULTRES	0
+#define CFRAME_SHIFT_MULTRES	3
 #else
 #error "Missing CFRAME_* definitions for this architecture"
 #endif

@@ -151,6 +151,10 @@ void dasm_setup(Dst_DECL, const void *actionlist)
   }
 }
 
+static int dasm_imms(int n)
+{
+  return (n >= -2048 && n < 2048) ? n : 4096;
+}
 
 #ifdef DASM_CHECKS
 #define CK(x, st) \
@@ -231,19 +235,23 @@ void dasm_put(Dst_DECL, int start, ...)
         *pl = -pos;  /* Label exists now. */
         b[pos++] = ofs;  /* Store pass1 offset estimate. */
         break;
-      case DASM_IMM: case DASM_IMMS:
+      case DASM_IMM:
 #ifdef DASM_CHECKS
-        CK((n & ((1<<((ins>>10)&31))-1)) == 0, RANGE_I);
+	CK((n & ((1<<((ins>>10)&31))-1)) == 0, RANGE_I);
 #endif
-        n >>= ((ins>>10)&31);
+	n >>= ((ins>>10)&31);
 #ifdef DASM_CHECKS
-        if (ins & 0x8000)
-          CK(((n + (1<<(((ins>>5)&31)-1)))>>((ins>>5)&31)) == 0, RANGE_I);
-        else
-          CK((n>>((ins>>5)&31)) == 0, RANGE_I);
+	if (ins & 0x8000)
+	  CK(((n + (1<<(((ins>>5)&31)-1)))>>((ins>>5)&31)) == 0, RANGE_I);
+	else
+	  CK((n>>((ins>>5)&31)) == 0, RANGE_I);
 #endif
-        b[pos++] = n;
-        break;
+	b[pos++] = n;
+	break;
+      case DASM_IMMS:
+        CK(dasm_imms(n) != 4096, RANGE_I);
+	b[pos++] = n;
+	break;
       }
     }
   }

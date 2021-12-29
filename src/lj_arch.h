@@ -31,6 +31,8 @@
 #define LUAJIT_ARCH_mips32	6
 #define LUAJIT_ARCH_MIPS64	7
 #define LUAJIT_ARCH_mips64	7
+#define LUAJIT_ARCH_RISCV64 8
+#define LUAJIT_ARCH_riscv64 8
 
 /* Target OS. */
 #define LUAJIT_OS_OTHER		0
@@ -65,6 +67,8 @@
 #define LUAJIT_TARGET	LUAJIT_ARCH_MIPS64
 #elif defined(__mips__) || defined(__mips) || defined(__MIPS__) || defined(__MIPS)
 #define LUAJIT_TARGET	LUAJIT_ARCH_MIPS32
+#elif defined(__riscv__) || defined(__riscv) || defined(__RISCV__) || defined(__RISCV)
+#define LUAJIT_TARGET	LUAJIT_ARCH_RISCV64
 #else
 #error "No support for this architecture (yet)"
 #endif
@@ -418,6 +422,24 @@
 #define LJ_ARCH_VERSION		10
 #endif
 
+#elif LUAJIT_TARGET == LUAJIT_ARCH_RISCV64
+
+#define LJ_ARCH_ENDIAN		LUAJIT_LE
+
+#define LJ_ARCH_BITS		64
+#define LJ_ARCH_NAME		"riscv64"
+#define LJ_TARGET_GC64		1
+
+#define LJ_TARGET_RISCV64		1
+#define LJ_TARGET_EHRETREG	0
+#define LJ_TARGET_EHRAREG	31
+#define LJ_TARGET_JUMPRANGE	20	/* +-2^20 = +-1MB */
+#define LJ_TARGET_MASKSHIFT	1
+#define LJ_TARGET_MASKROT	1
+#define LJ_TARGET_UNIFYROT	2
+#define LJ_ARCH_NUMMODE		LJ_NUMMODE_DUAL
+#define LUAJIT_DISABLE_JIT	1
+
 #else
 #error "No target architecture defined"
 #endif
@@ -495,6 +517,8 @@
 /* MIPS32ON64 aka n32 ABI support might be desirable, but difficult. */
 #error "Only n64 ABI supported for MIPS64"
 #endif
+#elif LJ_TARGET_RISCV64
+/* TODO: check constraints here. */
 #endif
 #endif
 
