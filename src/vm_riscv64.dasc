@@ -1,0 +1,783 @@
+|// Low-level VM code for RISCV64 CPUs.
+|// Bytecode interpreter, fast functions and helper functions.
+|// Copyright (C) 2005-2021 Mike Pall. See Copyright Notice in luajit.h
+|
+|.arch riscv64
+|.section code_op, code_sub
+|
+|.actionlist build_actionlist
+|.globals GLOB_
+|.globalnames globnames
+|.externnames extnames
+|
+|// Note: The ragged indentation of the instructions is intentional.
+|//       The starting columns indicate data dependencies.
+|
+|//-----------------------------------------------------------------------
+|
+|// The following must be C callee-save (but BASE is often refetched).
+|.define BASE,		x18	// Base of current Lua stack frame.
+|.define KBASE,		x19	// Constants of current Lua function.
+|.define PC,		x20	// Next PC.
+|.define DISPATCH,	x21	// Opcode dispatch table.
+|.define LREG,		x22	// Register holding lua_State (also in SAVE_L).
+|.define MULTRES,	x23	// Size of multi-result: (nresults+1)*8.
+|
+|.define JGL,		x24	// On-trace: global_State + 32768.
+|
+|// Constants for type-comparisons, stores and conversions. C callee-save.
+|.define TISNIL,	x24
+|.define TISNUM,	x25
+|.if FPU
+|.define TOBIT,		f24	// 2^52 + 2^51.
+|.endif
+|
+|// The following temporaries are not saved across C calls, except for RA.
+|.define RA,		x8	// Callee-save.
+|.define RB,		x5
+|.define RC,		x6
+|.define RD,		x7
+|.define INS,		x9
+|
+|.define AT,		x27	// Assembler temporary.
+|.define TMP0,		x28
+|.define TMP1,		x29
+|.define TMP2,		x30
+|.define TMP3,		x31
+|
+|// RISCV64 calling convention.
+|.define CARG1,		x10
+|.define CARG2,		x11
+|.define CARG3,		x12
+|.define CARG4,		x13
+|.define CARG5,		x14
+|.define CARG6,		x15
+|.define CARG7,		x16
+|.define CARG8,		x17
+|
+|.define CRET1,		CARG1
+|.define CRET2,		CARG2
+|.if FPU
+|.define FARG1,		f10
+|.define FARG2,		f11
+|.define FARG3,		f12
+|.define FARG4,		f13
+|.define FARG5,		f14
+|.define FARG6,		f15
+|.define FARG7,		f16
+|.define FARG8,		f17
+|
+|.define FRET1,		FARG1
+|.define FRET2,		FARG2
+|.endif
+|
+|// Stack layout while in interpreter. Must match with lj_frame.h.
+|
+|.define CFRAME_SPACE,	192	// Delta for sp.
+|
+|//----- 16 byte aligned, <-- sp entering interpreter
+|.define SAVE_ERRF,	188(sp)	// 32 bit values.
+|.define SAVE_NRES,	184(sp)
+|.define SAVE_CFRAME,	176(sp)	// 64 bit values.
+|.define SAVE_L,	168(sp)
+|.define SAVE_PC,	160(sp)
+|//----- 16 byte aligned
+|.define SAVE_GPR_,	80	// .. 80+10*8: 64 bit GPR saves.
+|.define SAVE_FPR_,	16	// .. 16+8*8: 64 bit FPR saves.
+|
+|.define TMPX,		8(sp)	// Unused by interpreter, temp for JIT code.
+|.define TMPD,		0(sp)
+|//----- 16 byte aligned
+|
+|.define TMPD_OFS,	0
+|
+|.define SAVE_MULTRES,	TMPD
+|
+|// Type definitions. Some of these are only used for documentation.
+|.type L,		lua_State,	LREG
+|.type GL,		global_State
+|.type TVALUE,		TValue
+|.type GCOBJ,		GCobj
+|.type STR,		GCstr
+|.type TAB,		GCtab
+|.type LFUNC,		GCfuncL
+|.type CFUNC,		GCfuncC
+|.type PROTO,		GCproto
+|.type UPVAL,		GCupval
+|.type NODE,		Node
+|.type NARGS8,		int
+|.type TRACE,		GCtrace
+|.type SBUF,		SBuf
+|
+|.define FRAME_PC,	-8
+|.define FRAME_FUNC,	-16
+|
+|//-----------------------------------------------------------------------
+|
+|// Trap for not-yet-implemented parts.
+|.macro NYI; .long 0x00100073; .endmacro
+|
+|//-----------------------------------------------------------------------
+|
+|// Endian-specific defines.
+|.define HI,		4
+|.define LO,		0
+|.define OFS_RD,	2
+|.define OFS_RA,	1
+|.define OFS_OP,	0
+|
+|// Instruction decode.
+|.macro decode_OP1, dst, ins; andi dst, ins, 0xff; .endmacro
+|.macro decode_OP4a, dst, ins; andi dst, ins, 0xff; .endmacro
+|.macro decode_OP4b, dst; slli dst, dst, 2; .endmacro
+|.macro decode_RC4a, dst, ins; srli dst, ins, 14; .endmacro
+|.macro decode_RC4b, dst; andi dst, dst, 0x3fc; .endmacro
+|.macro decode_RD4b, dst; slli dst, dst, 2; .endmacro
+|.macro decode_RA8a, dst, ins; srli dst, ins, 5; .endmacro
+|.macro decode_RA8b, dst; andi dst, dst, 0x7f8; .endmacro
+|.macro decode_RB8a, dst, ins; srli dst, ins, 21; .endmacro
+|.macro decode_RB8b, dst; andi dst, dst, 0x7f8; .endmacro
+|.macro decode_RD8a, dst, ins; srli dst, ins, 16; .endmacro
+|.macro decode_RD8b, dst; slli dst, dst, 3; .endmacro
+|.macro decode_RDtoRC8, dst, src; andi dst, src, 0x7f8; .endmacro
+|
+|// Instruction fetch.
+|.macro ins_NEXT1
+|  ld INS, 0(PC)
+|   addi PC, PC, 4
+|.endmacro
+|// Instruction decode+dispatch.
+|.macro ins_NEXT2
+|  decode_OP4a TMP1, INS
+|  decode_OP4b TMP1
+|  add TMP0, DISPATCH, TMP1
+|   decode_RD8a RD, INS
+|  ld AT, 0(TMP0)
+|   decode_RA8a RA, INS
+|   decode_RD8b RD
+|   decode_RA8b RA
+|  jr AT
+|.endmacro
+|.macro ins_NEXT
+|  ins_NEXT1
+|  ins_NEXT2
+|.endmacro
+|
+|// Instruction footer.
+|.if 1
+|  // Replicated dispatch. Less unpredictable branches, but higher I-Cache use.
+|  .define ins_next, ins_NEXT
+|  .define ins_next_, ins_NEXT
+|  .define ins_next1, ins_NEXT1
+|  .define ins_next2, ins_NEXT2
+|.else
+|  // Common dispatch. Lower I-Cache use, only one (very) unpredictable branch.
+|  // Affects only certain kinds of benchmarks (and only with -j off).
+|  .macro ins_next
+|    b ->ins_next
+|  .endmacro
+|  .macro ins_next1
+|  .endmacro
+|  .macro ins_next2
+|    b ->ins_next
+|  .endmacro
+|  .macro ins_next_
+|  ->ins_next:
+|    ins_NEXT
+|  .endmacro
+|.endif
+|
+|// Assumes DISPATCH is relative to GL.
+#define DISPATCH_GL(field)	(GG_DISP2G + (int)offsetof(global_State, field))
+#define DISPATCH_J(field)	(GG_DISP2J + (int)offsetof(jit_State, field))
+#define GG_DISP2GOT		(GG_OFS(got) - GG_OFS(dispatch))
+#define DISPATCH_GOT(name)	(GG_DISP2GOT + sizeof(void*)*LJ_GOT_##name)
+|
+#define PC2PROTO(field)  ((int)offsetof(GCproto, field)-(int)sizeof(GCproto))
+|
+|//-----------------------------------------------------------------------
+/* Generate subroutines used by opcodes and other parts of the VM. */
+/* The .code_sub section should be last to help static branch prediction. */
+static void build_subroutines(BuildCtx *ctx)
+{
+  |.code_sub
+  |
+  |//-----------------------------------------------------------------------
+  |//-- Return handling ----------------------------------------------------
+  |//-----------------------------------------------------------------------
+  |
+  |->vm_returnp:
+  | nop
+  |
+  |->vm_returnc:
+  | nop
+  |
+  |->vm_return:
+  | nop
+  |
+  |->vm_leave_cp:
+  | nop
+  |
+  |->vm_leave_unw:
+  | nop
+  |
+  |->vm_unwind_c:
+  | nop
+  |
+  |->vm_unwind_c_eh:
+  | nop
+  |
+  |->vm_unwind_ff:
+  | nop
+  |
+  |->vm_unwind_ff_eh:
+  | nop
+  |
+  |//-----------------------------------------------------------------------
+  |//-- Grow stack for calls -----------------------------------------------
+  |//-----------------------------------------------------------------------
+  |
+  |->vm_growstack_c:
+  | nop
+  |
+  |->vm_growstack_l:
+  | nop
+  |
+  |//-----------------------------------------------------------------------
+  |//-- Entry points into the assembler VM ---------------------------------
+  |//-----------------------------------------------------------------------
+  |
+  |->vm_resume:
+  | nop
+  |
+  |->vm_pcall:
+  | nop
+  |
+  |->vm_call:
+  | nop
+  |
+  |->vm_call_dispatch:
+  | nop
+  |
+  |->vm_call_dispatch_f:
+  | nop
+  |
+  |->vm_cpcall:
+  | nop
+  |
+  |//-----------------------------------------------------------------------
+  |//-- Metamethod handling ------------------------------------------------
+  |//-----------------------------------------------------------------------
+  |
+  |// The lj_meta_* functions (except for lj_meta_cat) don't reallocate the
+  |// stack, so BASE doesn't need to be reloaded across these calls.
+  |
+  |//-- Continuation dispatch ----------------------------------------------
+  |
+  |->cont_dispatch:
+  | nop
+  |
+  |->cont_cat:
+  | nop
+  |
+  |//-- Table indexing metamethods -----------------------------------------
+  |
+  |->vmeta_tgets1:
+  | nop
+  |
+  |->vmeta_tgets:
+  | nop
+  |
+  |->vmeta_tgetb:			// TMP0 = index
+  |  addi CARG3, DISPATCH, DISPATCH_GL(tmptv)
+  |  sw TMP0, LO(CARG3)
+  |  sw TISNUM, HI(CARG3)
+  |
+  |->vmeta_tgetv:
+  | nop
+  |
+  |->vmeta_tgetr:
+  | nop
+  |
+  |//-----------------------------------------------------------------------
+  |
+  |->vmeta_tsets1:
+  | nop
+  |
+  |->vmeta_tsets:
+  | nop
+  |
+  |->vmeta_tsetb:
+  | nop
+  |
+  |->vmeta_tsetv:
+  | nop
+  |
+  |->vmeta_tsetr:
+  | nop
+  |
+  |//-- Comparison metamethods ---------------------------------------------
+  |
+  |->vmeta_comp:
+  | nop
+  |
+  |->cont_nop:
+  | nop
+  |
+  |->cont_ra:
+  | nop
+  |
+  |->cont_condt:
+  | nop
+  |
+  |->cont_condf:
+  | nop
+  |
+  |->vmeta_equal:
+  | nop
+  |
+  |->vmeta_equal_cd:
+  | nop
+  |
+  |->vmeta_istype:
+  | nop
+  |
+  |//-- Arithmetic metamethods ---------------------------------------------
+  |
+  |->vmeta_unm:
+  | nop
+  |
+  |->vmeta_arith:
+  | nop
+  |
+  |->vmeta_binop:
+  | nop
+  |
+  |->vmeta_len:
+  | nop
+  |
+  |
+  |//-- Call metamethod ----------------------------------------------------
+  |
+  |->vmeta_call:
+  | nop
+  |
+  |->vmeta_callt:
+  | nop
+  |
+  |//-- Argument coercion for 'for' statement ------------------------------
+  |
+  |->vmeta_for:
+  | nop
+  |
+  |//-----------------------------------------------------------------------
+  |//-- Fast functions -----------------------------------------------------
+  |//-----------------------------------------------------------------------
+  |
+  |.macro .ffunc, name
+  |->ff_ .. name:
+  |.endmacro
+  |
+  |.macro .ffunc_1, name
+  |->ff_ .. name:
+  |.endmacro
+  |
+  |.macro .ffunc_2, name
+  |->ff_ .. name:
+  |.endmacro
+  |
+  |.macro .ffunc_n, name
+  |->ff_ .. name:
+  |.endmacro
+  |
+  |.macro .ffunc_nn, name
+  |->ff_ .. name:
+  |.endmacro
+  |
+  |// Inlined GC threshold check. Caveat: uses TMP0 and TMP1 and has delay slot!
+  |.macro ffgccheck
+  |.endmacro
+  |
+  |//-- Base library: checks -----------------------------------------------
+  |
+  |.ffunc_1 assert
+  | nop
+  |
+  |.ffunc type
+  | nop
+  |
+  |//-- Base library: getters and setters ---------------------------------
+  |
+  |.ffunc_1 getmetatable
+  | nop
+  |
+  |.ffunc_2 setmetatable
+  | nop
+  |
+  |.ffunc rawget
+  | nop
+  |
+  |//-- Base library: conversions ------------------------------------------
+  |
+  |.ffunc tonumber
+  | nop
+  |
+  |.ffunc_1 tostring
+  | nop
+  |
+  |//-- Base library: iterators -------------------------------------------
+  |
+  |.ffunc next
+  | nop
+  |
+  |.ffunc_1 pairs
+  | nop
+  |
+  |.ffunc ipairs_aux
+  | nop
+  |
+  |.ffunc_1 ipairs
+  | nop
+  |
+  |//-- Base library: catch errors ----------------------------------------
+  |
+  |.ffunc pcall
+  | nop
+  |
+  |.ffunc xpcall
+  | nop
+  |
+  |//-- Coroutine library --------------------------------------------------
+  |
+  |.macro coroutine_resume_wrap, resume
+  |.if resume
+  |.ffunc coroutine_resume
+  |  nop
+  |.else
+  |.ffunc coroutine_wrap_aux
+  |  nop
+  |.endif
+  |.endmacro
+  |
+  |  coroutine_resume_wrap 1		// coroutine.resume
+  |  coroutine_resume_wrap 0		// coroutine.wrap
+  |
+  |.ffunc coroutine_yield
+  | nop
+  |
+  |//-- Math library -------------------------------------------------------
+  |
+  |.ffunc_1 math_abs
+  | nop
+  |
+  |->fff_restv:
+  | nop
+  |
+  |.macro math_extern, func
+  |  .ffunc math_ .. func
+  |  nop
+  |.endmacro
+  |
+  |.macro math_extern2, func
+  |  .ffunc_nn math_ .. func
+  |  nop
+  |.endmacro
+  |
+  |// TODO: Return integer type if result is integer (own sf implementation).
+  |.macro math_round, func
+  |->ff_math_ .. func:
+  | nop
+  |.endmacro
+  |
+  |  math_round floor
+  |  math_round ceil
+  |
+  |.ffunc math_log
+  | jal extern log
+  |
+  |  math_extern log10
+  |  math_extern exp
+  |  math_extern sin
+  |  math_extern cos
+  |  math_extern tan
+  |  math_extern asin
+  |  math_extern acos
+  |  math_extern atan
+  |  math_extern sinh
+  |  math_extern cosh
+  |  math_extern tanh
+  |  math_extern2 pow
+  |  math_extern2 atan2
+  |  math_extern2 fmod
+  |
+  |.if FPU
+  |.ffunc_n math_sqrt
+  |  nop
+  |// fallthrough to ->fff_resn
+  |.else
+  |  math_extern sqrt
+  |.endif
+  |
+  |->fff_resn:
+  | nop
+  |
+  |.ffunc math_ldexp
+  | nop
+  |
+  |.ffunc_n math_frexp
+  | nop
+  |
+  |.ffunc_n math_modf
+  | nop
+  |
+  |.macro math_minmax, name, bxx, fpins
+  |  .ffunc_1 name
+  |  nop
+  |.endmacro
+  |
+  |  math_minmax math_min, blt, fmin.d
+  |  math_minmax math_max, bge, fmax.d
+  |
+  |//-- String library -----------------------------------------------------
+  |
+  |.ffunc string_byte
+  | nop
+  |
+  |.ffunc string_char
+  | nop
+  |
+  |->fff_newstr:
+  | nop
+  |
+  |->fff_resstr:
+  | nop
+  |
+  |.ffunc string_sub
+  | nop
+  |
+  |->fff_emptystr:
+  | nop
+  |
+  |.macro ffstring_op, name
+  |  .ffunc string_ .. name
+  | nop
+  |
+  |.endmacro
+  |
+  |ffstring_op reverse
+  |ffstring_op lower
+  |ffstring_op upper
+  |
+  |//-- Bit library --------------------------------------------------------
+  |
+  |->vm_tobit_fb:
+  | nop
+  |
+  |.macro .ffunc_bit, name
+  |  .ffunc_1 bit_..name
+  |  nop
+  |
+  |.endmacro
+  |
+  |.macro .ffunc_bit_op, name, ins
+  |  .ffunc_bit name
+  |  nop
+  |.endmacro
+  |
+  |.ffunc_bit_op band, and
+  |.ffunc_bit_op bor, or
+  |.ffunc_bit_op bxor, xor
+  |
+  |.ffunc_bit bswap
+  | nop
+  |
+  |.ffunc_bit bnot
+  | nop
+  |
+  |.macro .ffunc_bit_sh, name, ins, shmod
+  |  .ffunc_2 bit_..name
+  |  nop
+  |.endmacro
+  |
+  |.ffunc_bit_sh lshift, sll, 0
+  |.ffunc_bit_sh rshift, srl, 0
+  |.ffunc_bit_sh arshift, sra, 0
+  |.ffunc_bit_sh rol, or, 1
+  |.ffunc_bit_sh ror, or, 2
+  |
+  |.ffunc_bit tobit
+  |->fff_resi:
+  | nop
+  |
+  |//-----------------------------------------------------------------------
+  |//-- Special dispatch targets -------------------------------------------
+  |//-----------------------------------------------------------------------
+  |
+  |->vm_record:
+  | nop
+  |
+  |->vm_rethook:
+  | nop
+  |
+  |->vm_inshook:
+  | nop
+  |
+  |->cont_hook:
+  | nop
+  |
+  |->vm_hotloop:
+  | nop
+  |
+  |->vm_callhook:
+  | nop
+  |
+  |->vm_hotcall:
+  | nop
+  |
+  |->vm_profhook:
+  | nop
+  |
+  |//-----------------------------------------------------------------------
+  |//-- Trace exit handler -------------------------------------------------
+  |//-----------------------------------------------------------------------
+
+  |->vm_exit_handler:
+  | nop
+  |
+  |->vm_exit_interp:
+  | nop
+  |
+  |//-----------------------------------------------------------------------
+  |//-- Math helper functions ----------------------------------------------
+  |//-----------------------------------------------------------------------
+  |
+  |.macro vm_round, func
+  | nop
+  |.endmacro
+  |
+  |->vm_floor:
+  | nop
+  |
+  |->vm_ceil:
+  | nop
+  |
+  |->vm_trunc:
+  | nop
+  |
+  |
+  |
+  |//-----------------------------------------------------------------------
+  |//-- Miscellaneous functions --------------------------------------------
+  |//-----------------------------------------------------------------------
+  |
+  |//-----------------------------------------------------------------------
+  |//-- FFI helper functions -----------------------------------------------
+  |//-----------------------------------------------------------------------
+  |
+  |// Handler for callback functions. Callback slot number in r7, g in r6.
+  |->vm_ffi_callback:
+  | nop
+  |
+  |->cont_ffi_callback:
+  | nop
+  |
+  |->vm_ffi_call:
+  | nop
+  |
+  |// Note: vm_ffi_call must be the last function in this object file!
+  |
+  |//-----------------------------------------------------------------------
+}
+
+/* Generate the code for a single instruction. */
+static void build_ins(BuildCtx *ctx, BCOp op, int defop)
+{
+  |=>defop:
+
+  switch (op) {
+  case BC_KSHORT:
+    |  // RA = dst*8, RD = int16_literal*8
+    |  srai RD, INS, 16
+    |  add RA, BASE, RA
+    |  ins_next1
+    |  sd TISNUM, HI(RA)
+    |   sd RD, LO(RA)
+    |  ins_next2
+    break;
+
+  case BC_FUNCV:  /* NYI: compiled vararg functions. */
+    |  // Fall through. Assumes BC_IFUNCF/BC_IFUNCV follow.
+    break;
+
+  case BC_IFUNCV:
+    |  // BASE = new base, RA = BASE+framesize*8, RB = LFUNC, RC = nargs*8
+    |   add TMP1, BASE, RC
+    |  ld TMP2, L->maxstack
+    |  add TMP0, RA, RC
+    |   sd LFUNC:RB, LO(TMP1)		// Store copy of LFUNC.
+    |   addi TMP3, RC, 8+FRAME_VARG
+    |  sltu AT, TMP0, TMP2
+    |    ld KBASE, -4+PC2PROTO(k)(PC)
+    |  sd TMP3, HI(TMP1)		// Store delta + FRAME_VARG.
+    |  beqz AT, ->vm_growstack_l
+    |  lbu TMP2, -4+PC2PROTO(numparams)(PC)
+    |   mv RA, BASE
+    |   mv RC, TMP1
+    |  ins_next1
+    |   addi BASE, TMP1, 8
+    |  beqz TMP2, >4
+    |1:
+    |  ld TMP0, HI(RA)
+    |   ld TMP3, LO(RA)
+    |  mv CARG1, TMP0
+    |  bltu RA, RC, >2			// Less args than parameters?
+    |  mv TMP0, TISNIL			// Clear missing parameters.
+    |  j >3
+    |2:
+    |  mv CARG1, TISNIL			// Clear old fixarg slot (help the GC).
+    |3:
+    |   sd TMP3, 8+LO(TMP1)
+    |    addi TMP2, TMP2, -1
+    |  sd TMP0, 8+HI(TMP1)
+    |    addi TMP1, TMP1, 8
+    |  sd CARG1, HI(RA)
+    |   addi RA, RA, 8
+    |  bnez TMP2, <1
+    |4:
+    |  ins_next2
+    break;
+
+  case BC_ITERN:
+    |->vm_IITERN:
+    | nop
+    break;
+  /* ---------------------------------------------------------------------- */
+
+  default:
+    | nop
+    // fprintf(stderr, "Error: undefined opcode BC_%s\n", bc_names[op]);
+    // exit(2);
+    break;
+  }
+}
+
+static int build_backend(BuildCtx *ctx)
+{
+  int op;
+
+  dasm_growpc(Dst, BC__MAX);
+
+  build_subroutines(ctx);
+
+  |.code_op
+  for (op = 0; op < BC__MAX; op++)
+    build_ins(ctx, (BCOp)op, op);
+
+  return BC__MAX;
+}
+
+/* Emit pseudo frame-info for all assembler functions. */
+static void emit_asm_debug(BuildCtx *ctx)
+{
+  /* TODO: emit_asm_debug */
+}
